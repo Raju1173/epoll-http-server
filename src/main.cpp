@@ -1,6 +1,9 @@
+#include <csignal>
+#include <cstddef>
 #include <cstdio>
+#include <cstring>
 #include <iostream>
-#include <stdexcept>
+#include <ostream>
 #include <sys/socket.h>
 #include <errno.h>
 #include <system_error>
@@ -9,41 +12,115 @@
 
 #define LISTEN_BACKLOG 64
 
+int handleClient(int cfd)
+{
+    ssize_t n = 0;
+    char buf[4096];
+
+    n = read(cfd, buf, sizeof(buf) - 1);
+
+    if(n == -1)
+    {
+	if (errno == EINTR) return -1;
+
+	throw std::system_error(errno, std::system_category(), "Failed to read");
+	return - 1;
+    }
+
+    if(n == 0)
+    {
+	std::cout << "Connection closed by client : " << cfd << std::endl;
+	
+	close(cfd);
+
+	return 0;
+    }
+
+    std::cout << buf;
+
+    const char* hello = "HTTP/1.1 200 OK\r\n\r\nHELLO WORLD!";
+
+    if(write(cfd, hello, strlen(hello)) == -1)
+    {
+	throw std::system_error(errno, std::system_category(), "Failed to write to clientfd");
+    }
+
+    if (close(cfd) == -1)
+    {
+	throw std::system_error(errno, std::system_category(), "Failed to close client socket");
+    }
+
+    return 0;
+}
+
+volatile sig_atomic_t running = true;
+
+void handleSIGINT(int signum)
+{
+    running = false;
+}
+
 int main()
 {
-  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
-  if(sockfd == -1)
-  {
-    throw std::system_error(errno, std::system_category(), "Failed to create socket"); //Fine for now but create a centralized function for handling errors later
-  }
+    if(sockfd == -1)
+    {
+	throw std::system_error(errno, std::system_category(), "Failed to create socket"); //Fine for now but create a centralized function for handling errors later
+    }
 
-  struct sockaddr_in addr = {AF_INET, htons(8080), {0}};
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+    {
+	throw std::system_error(errno, std::system_category(), "setsockopt failed");
+    }
 
-  if(bind(sockfd, (const sockaddr*)&addr, sizeof(addr)) == -1)
-  {
-    throw std::system_error(errno, std::system_category(), "Failed to bind socket");
-  }
+    struct sockaddr_in addr = {AF_INET, htons(8080), {0}}; 
 
-  if(listen(sockfd, LISTEN_BACKLOG) == -1)
-  {
-    throw std::system_error(errno, std::system_category(), "Failed to set socket as passive");
-  }
-  
-  struct sockaddr_in clAddr;
-  socklen_t clAddrSize = sizeof(clAddr);
+    if(bind(sockfd, (const sockaddr*)&addr, sizeof(addr)) == -1)
+    {
+	throw std::system_error(errno, std::system_category(), "Failed to bind socket");
+    }
 
-  int clientfd = accept(sockfd, (struct sockaddr *) &clAddr, &clAddrSize);
+    if(listen(sockfd, LISTEN_BACKLOG) == -1)
+    {
+	throw std::system_error(errno, std::system_category(), "Failed to set socket as passive");
+    }
 
-  if(clientfd == -1)
-  {
-    throw std::system_error(errno, std::system_category(), "Failed to accept connection");
-  }
+    struct sockaddr_in clAddr;
+    socklen_t clAddrSize = sizeof(clAddr);
 
-  if (close(sockfd) == -1)
-  {
-    throw std::system_error(errno, std::system_category(), "Failed to close socket");
-  }
+    struct sigaction action = {0};
 
-  return 0;
+    action.sa_handler = &handleSIGINT;
+
+    sigaction(SIGINT, &action, NULL);
+
+    while(running)
+    {
+	int clientfd = accept(sockfd, (struct sockaddr *) &clAddr, &clAddrSize);
+	
+	clAddrSize = sizeof(clAddr);
+
+	if(clientfd == -1)
+	{
+	    if (errno == EINTR) break;
+
+	    throw std::system_error(errno, std::system_category(), "Failed to accept connection");
+	}
+
+	if(handleClient(clientfd) == -1)
+	{
+	    std::cerr << "Error handling client " << clientfd << std::endl;
+
+	    close(clientfd);
+	}
+    }
+
+    if (close(sockfd) == -1)
+    {
+	throw std::system_error(errno, std::system_category(), "Failed to close socket");
+    }
+
+    return 0;
 }
