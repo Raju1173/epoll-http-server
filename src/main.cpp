@@ -1,6 +1,7 @@
 #include <csignal>
 #include <cstddef>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <ostream>
@@ -9,40 +10,68 @@
 #include <system_error>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <vector>
 
 #define LISTEN_BACKLOG 64
 
 int handleClient(int cfd)
 {
+    std::vector<char> buf(4096);
+    size_t curSize = 0;
     ssize_t n = 0;
-    char buf[4096];
 
-    n = read(cfd, buf, sizeof(buf) - 1);
-
-    if(n == -1)
+    while(true)
     {
-	if (errno == EINTR) return -1;
+	if(curSize == buf.size())
+	{
+	    buf.resize(buf.size() * 2);
+	}
 
-	throw std::system_error(errno, std::system_category(), "Failed to read");
-	return - 1;
-    }
+	n = read(cfd, buf.data() + curSize, buf.size() - curSize);
+    
+	if(n == -1)
+	{
+	    if (errno == EINTR) continue;
 
-    if(n == 0)
-    {
-	std::cout << "Connection closed by client : " << cfd << std::endl;
+	    return - 1;
+	}
+
+	if(n == 0)
+	{
+	    std::cout << "Connection closed by client : " << cfd << std::endl;
+	    
+	    break;
+	}
 	
-	close(cfd);
-
-	return 0;
+	curSize += n;
+	
+	//This works because the server only supports GET requests...
+	if(curSize >= 4 && memcmp(buf.data() + curSize - 4, "\r\n\r\n", 4) == 0)
+	{
+	    break;
+	}
     }
 
-    std::cout << buf;
+    std::cout.write(buf.data(), curSize);
 
-    const char* hello = "HTTP/1.1 200 OK\r\n\r\nHELLO WORLD!";
+    const char* response = "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHELLO WORLD!";
+    
+    size_t totalSize = strlen(response);
+    size_t totalSent = 0;
+    n = 0;
 
-    if(write(cfd, hello, strlen(hello)) == -1)
+    while(totalSent < totalSize)
     {
-	throw std::system_error(errno, std::system_category(), "Failed to write to clientfd");
+	n = write(cfd, response + totalSent, totalSize - totalSent);
+
+	if(n == -1)
+	{
+	    if(errno == EINTR) continue;
+	    
+	    return -1;
+	}
+
+	totalSent += n;
     }
 
     if (close(cfd) == -1)
@@ -53,11 +82,11 @@ int handleClient(int cfd)
     return 0;
 }
 
-volatile sig_atomic_t running = true;
+volatile sig_atomic_t Running = true;
 
 void handleSIGINT(int signum)
 {
-    running = false;
+    Running = false;
 }
 
 int main()
@@ -96,7 +125,7 @@ int main()
 
     sigaction(SIGINT, &action, NULL);
 
-    while(running)
+    while(Running)
     {
 	int clientfd = accept(sockfd, (struct sockaddr *) &clAddr, &clAddrSize);
 	
