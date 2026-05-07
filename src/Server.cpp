@@ -14,7 +14,37 @@
 
 #define LISTEN_BACKLOG 64
 
-int handleClient(int cfd)
+int initializeServer()
+{
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if(sockfd == -1)
+    {
+	return -1;
+    }
+
+    int opt = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+    {
+	return -1;
+    }
+
+    struct sockaddr_in addr = {AF_INET, htons(8080), {0}}; 
+
+    if(bind(sockfd, (const sockaddr*)&addr, sizeof(addr)) == -1)
+    {
+	return -1;
+    }
+
+    if(listen(sockfd, LISTEN_BACKLOG) == -1)
+    {
+	return -1;
+    }
+
+    return sockfd;
+}
+
+std::vector<char> readSock(int fd)
 {
     std::vector<char> buf(4096);
     size_t curSize = 0;
@@ -27,18 +57,18 @@ int handleClient(int cfd)
 	    buf.resize(buf.size() * 2);
 	}
 
-	n = read(cfd, buf.data() + curSize, buf.size() - curSize);
+	n = read(fd, buf.data() + curSize, buf.size() - curSize);
     
 	if(n == -1)
 	{
 	    if (errno == EINTR) continue;
 
-	    return - 1;
+	    return {};
 	}
 
 	if(n == 0)
 	{
-	    std::cout << "Connection closed by client : " << cfd << std::endl;
+	    std::cout << "Connection closed by client : " << fd << std::endl;
 	    
 	    break;
 	}
@@ -52,17 +82,25 @@ int handleClient(int cfd)
 	}
     }
 
-    std::cout.write(buf.data(), curSize);
+    buf.resize(curSize);
 
-    const char* response = "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHELLO WORLD!";
-    
+    return buf;
+}
+
+const char* parse(const char* request)
+{
+    return "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHELLO WORLD!";
+}
+
+int writeSock(int fd, const char* response)
+{
     size_t totalSize = strlen(response);
     size_t totalSent = 0;
-    n = 0;
+    ssize_t n = 0;
 
     while(totalSent < totalSize)
     {
-	n = write(cfd, response + totalSent, totalSize - totalSent);
+	n = write(fd, response + totalSent, totalSize - totalSent);
 
 	if(n == -1)
 	{
@@ -73,6 +111,19 @@ int handleClient(int cfd)
 
 	totalSent += n;
     }
+
+    return 0;
+}
+
+int handleClient(int cfd)
+{
+    std::vector<char> request = readSock(cfd);
+
+    std::cout << request.data();
+
+    const char* response = parse(request.data());
+    
+    writeSock(cfd, response);
 
     if (close(cfd) == -1)
     {
@@ -91,30 +142,7 @@ void handleSIGINT(int signum)
 
 int main()
 {
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-
-    if(sockfd == -1)
-    {
-	throw std::system_error(errno, std::system_category(), "Failed to create socket"); //Fine for now but create a centralized function for handling errors later
-    }
-
-    int opt = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
-    {
-	throw std::system_error(errno, std::system_category(), "setsockopt failed");
-    }
-
-    struct sockaddr_in addr = {AF_INET, htons(8080), {0}}; 
-
-    if(bind(sockfd, (const sockaddr*)&addr, sizeof(addr)) == -1)
-    {
-	throw std::system_error(errno, std::system_category(), "Failed to bind socket");
-    }
-
-    if(listen(sockfd, LISTEN_BACKLOG) == -1)
-    {
-	throw std::system_error(errno, std::system_category(), "Failed to set socket as passive");
-    }
+    int sockfd = initializeServer();
 
     struct sockaddr_in clAddr;
     socklen_t clAddrSize = sizeof(clAddr);
