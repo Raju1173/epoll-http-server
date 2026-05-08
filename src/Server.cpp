@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <errno.h>
@@ -11,6 +12,7 @@
 #include <unistd.h>
 #include <vector>
 #include <expected>
+#include <fstream>
 
 #define LISTEN_BACKLOG 64
 
@@ -117,9 +119,49 @@ std::expected<std::vector<char>, ErrorInfo> readSock(const Socket& sock)
     return buf;
 }
 
-std::expected<std::string, ErrorInfo> parse(const char* request)
+std::expected<std::string, ErrorInfo> parse(std::string request)
 {
-    return "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHELLO WORLD!";
+    if(!request.starts_with("GET "))
+    {
+        return std::unexpected(ErrorInfo{405, "Method not supported"});
+    }
+
+    size_t start = 4; 
+    size_t end = request.find(' ', start);
+
+    if(end == SIZE_MAX)
+    {
+        return std::unexpected(ErrorInfo{400, "Bad Request: No trailing space after path"});
+    }
+
+    std::string path = "./static" + request.substr(start, end - start);
+
+    if(path.find("..") != SIZE_MAX)
+    {
+        return std::unexpected(ErrorInfo{403, "Forbidden: Path traversal detected"});
+    }
+
+    if(path == "./static/")
+    {
+	path = "./static/index.html";
+    }
+
+    std::string content;
+
+    std::ifstream file(path);
+
+    if(!file.is_open())
+    {
+        return std::unexpected(ErrorInfo{404, "Not Found"});
+    }
+
+    std::stringstream buffer;
+    buffer << file.rdbuf();
+    content = buffer.str();
+
+    std::string response = std::format("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}", content.size(), content);
+
+    return response;
 }
 
 std::expected<size_t, ErrorInfo> writeSock(const Socket& sock, std::string response)
