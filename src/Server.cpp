@@ -1,50 +1,80 @@
+#include <cerrno>
 #include <csignal>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
-#include <ostream>
+#include <string>
 #include <sys/socket.h>
 #include <errno.h>
-#include <system_error>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <vector>
+#include <expected>
 
 #define LISTEN_BACKLOG 64
 
-int initializeServer()
-{
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+struct ErrorInfo {
+    int code;
+    std::string message;
+};
 
-    if(sockfd == -1)
+class Socket {
+public :
+    int fd;
+
+    Socket(int fileDesc) : fd(fileDesc) {}
+
+    Socket(const Socket&) = delete;
+    Socket& operator=(const Socket&) = delete;
+
+    Socket(Socket&& other) noexcept : fd(other.fd)
     {
-	return -1;
+	other.fd = -1;
+    }
+
+    ~Socket()
+    {
+	if (fd != -1)
+	    close(fd);
+    }
+};
+
+std::expected<Socket, ErrorInfo> initializeServer()
+{
+    Socket sock = Socket(socket(AF_INET, SOCK_STREAM, 0));
+
+    if(sock.fd == -1)
+    {
+	int err = errno;
+	return std::unexpected(ErrorInfo{err, "Failed to create socket : " + std::string(strerror(err))});
     }
 
     int opt = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+    if (setsockopt(sock.fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
     {
-	return -1;
+	int err = errno;
+	return std::unexpected(ErrorInfo{err, "Failed to set socket options : " + std::string(strerror(err))});
     }
 
     struct sockaddr_in addr = {AF_INET, htons(8080), {0}}; 
 
-    if(bind(sockfd, (const sockaddr*)&addr, sizeof(addr)) == -1)
+    if(bind(sock.fd, (const sockaddr*)&addr, sizeof(addr)) == -1)
     {
-	return -1;
+	int err = errno;
+	return std::unexpected(ErrorInfo{err, "Failed to bind socket : " + std::string(strerror(err))});
     }
 
-    if(listen(sockfd, LISTEN_BACKLOG) == -1)
+    if(listen(sock.fd, LISTEN_BACKLOG) == -1)
     {
-	return -1;
+	int err = errno;
+	return std::unexpected(ErrorInfo{err, "Failed to set socket as passive : " + std::string(strerror(err))});
     }
 
-    return sockfd;
+    return sock;
 }
 
-std::vector<char> readSock(int fd)
+std::expected<std::vector<char>, ErrorInfo> readSock(const Socket& sock)
 {
     std::vector<char> buf(4096);
     size_t curSize = 0;
@@ -57,19 +87,19 @@ std::vector<char> readSock(int fd)
 	    buf.resize(buf.size() * 2);
 	}
 
-	n = read(fd, buf.data() + curSize, buf.size() - curSize);
+	n = read(sock.fd, buf.data() + curSize, buf.size() - curSize);
     
 	if(n == -1)
 	{
-	    if (errno == EINTR) continue;
+	    int err = errno;
 
-	    return {};
+	    if (err == EINTR) continue;
+
+	    return std::unexpected(ErrorInfo{err, "Failed to read request : " + std::string(strerror(err))});
 	}
 
 	if(n == 0)
 	{
-	    std::cout << "Connection closed by client : " << fd << std::endl;
-	    
 	    break;
 	}
 	
@@ -87,50 +117,74 @@ std::vector<char> readSock(int fd)
     return buf;
 }
 
-const char* parse(const char* request)
+std::expected<std::string, ErrorInfo> parse(const char* request)
 {
     return "HTTP/1.1 200 OK\r\nContent-Length: 12\r\n\r\nHELLO WORLD!";
 }
 
-int writeSock(int fd, const char* response)
+std::expected<size_t, ErrorInfo> writeSock(const Socket& sock, std::string response)
 {
-    size_t totalSize = strlen(response);
+    size_t totalSize = response.length();
     size_t totalSent = 0;
     ssize_t n = 0;
 
     while(totalSent < totalSize)
     {
-	n = write(fd, response + totalSent, totalSize - totalSent);
+	n = write(sock.fd, response.data() + totalSent, totalSize - totalSent);
 
 	if(n == -1)
 	{
+	    int err = errno;
+
 	    if(errno == EINTR) continue;
 	    
-	    return -1;
+	    return std::unexpected(ErrorInfo{err, "Failed to write response : " + std::string(strerror(err))});
 	}
 
 	totalSent += n;
     }
 
-    return 0;
+    return totalSent;
 }
 
-int handleClient(int cfd)
+std::expected<Socket, ErrorInfo> acceptClient(const Socket& serverSock, struct sockaddr* clAddr, socklen_t* clAddrSize)
 {
-    std::vector<char> request = readSock(cfd);
+    Socket clientSock = Socket(accept(serverSock.fd, clAddr, clAddrSize));
 
-    std::cout << request.data();
-
-    const char* response = parse(request.data());
-    
-    writeSock(cfd, response);
-
-    if (close(cfd) == -1)
+    if(clientSock.fd == -1)
     {
-	throw std::system_error(errno, std::system_category(), "Failed to close client socket");
+	int err = errno;
+
+	return std::unexpected(ErrorInfo{err, "Failed to accept client : " + std::string(strerror(err))});
     }
 
-    return 0;
+    return clientSock;
+}
+
+std::expected<void, ErrorInfo> handleClient(const Socket& sock)
+{
+    auto requestResult = readSock(sock);
+    
+    if(!requestResult)
+    {
+        return std::unexpected(requestResult.error());
+    }
+
+    auto responseResult = parse((*requestResult).data());
+    
+    if(!responseResult)
+    {
+        return std::unexpected(responseResult.error());
+    }
+    
+    auto writeResult = writeSock(sock, *responseResult);
+
+    if(!writeResult)
+    {
+        return std::unexpected(writeResult.error());
+    }
+
+    return {};
 }
 
 volatile sig_atomic_t Running = true;
@@ -142,41 +196,40 @@ void handleSIGINT(int signum)
 
 int main()
 {
-    int sockfd = initializeServer();
+    auto serverSock = initializeServer();
+
+    if(!serverSock)
+    {
+        fprintf(stderr, "Fatal Server Error: %s (Code: %d)\n", serverSock.error().message.data(), serverSock.error().code);
+    
+	return EXIT_FAILURE;
+    }
 
     struct sockaddr_in clAddr;
     socklen_t clAddrSize = sizeof(clAddr);
 
     struct sigaction action = {0};
-
     action.sa_handler = &handleSIGINT;
-
     sigaction(SIGINT, &action, NULL);
 
     while(Running)
     {
-	int clientfd = accept(sockfd, (struct sockaddr *) &clAddr, &clAddrSize);
-	
-	clAddrSize = sizeof(clAddr);
-
-	if(clientfd == -1)
+        auto clientSock = acceptClient(*serverSock, (struct sockaddr*) &clAddr, &clAddrSize);
+        
+        if(!clientSock)
 	{
-	    if (errno == EINTR) break;
+            if (clientSock.error().code == EINTR) break;
 
-	    throw std::system_error(errno, std::system_category(), "Failed to accept connection");
-	}
+            fprintf(stderr, "Accept failed: %s\n", clientSock.error().message.data());
+        
+	    continue; 
+        }
 
-	if(handleClient(clientfd) == -1)
-	{
-	    std::cerr << "Error handling client " << clientfd << std::endl;
-
-	    close(clientfd);
-	}
-    }
-
-    if (close(sockfd) == -1)
-    {
-	throw std::system_error(errno, std::system_category(), "Failed to close socket");
+        auto result = handleClient(*clientSock);
+        
+	if(!result) {
+            fprintf(stderr, "Client handling error: %s\n", result.error().message.data());
+        }
     }
 
     return 0;
