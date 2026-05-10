@@ -5,7 +5,7 @@
 #include <fstream>
 #include <sstream>
 
-#define LISTEN_BACKLOG 64
+#define LISTEN_BACKLOG 10000
 
 std::expected<Socket, ErrorInfo> initializeServer()
 {

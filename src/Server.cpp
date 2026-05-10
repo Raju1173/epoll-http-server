@@ -1,9 +1,11 @@
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iostream>
 #include "Server.h"
 
 volatile sig_atomic_t Running = true;
@@ -31,6 +33,9 @@ int main()
     action.sa_handler = &handleSIGINT;
     sigaction(SIGINT, &action, NULL);
 
+    int totalRequests = 0;
+    std::chrono::nanoseconds totalDuration(0);
+
     while(Running)
     {
         auto clientSock = acceptClient(*serverSock, (struct sockaddr*) &clAddr, &clAddrSize);
@@ -44,12 +49,24 @@ int main()
 	    continue; 
         }
 
+	auto start = std::chrono::steady_clock::now();
+
         auto result = handleClient(*clientSock);
+
+	auto end = std::chrono::steady_clock::now();
         
+	totalDuration += (end - start);
+
 	if(!result) {
             fprintf(stderr, "Client handling error: %s\n", result.error().message.data());
         }
+
+	totalRequests++;
     }
+
+    double seconds = std::chrono::duration<double>(totalDuration).count();
+
+    std::cout << "Internal req/sec: " << totalRequests / seconds << std::endl;
 
     return 0;
 }
