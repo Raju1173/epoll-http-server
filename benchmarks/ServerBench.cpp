@@ -1,7 +1,6 @@
 #include "Client.h"
 #include <chrono>
 #include <iostream>
-#include <iterator>
 #include <ostream>
 #include <ratio>
 
@@ -24,14 +23,14 @@ int main()
 	    continue;
 	}
 	
-	auto send = client.send();
+	auto send = client.send("GET / HTTP/1.1\r\n\r\n");
 	
 	if(!send.has_value())
 	{
 	    continue;
 	}
 
-	auto flush = client.flush();
+	auto flush = client.recieve();
 
 	if(!flush.has_value())
 	{

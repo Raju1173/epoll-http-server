@@ -1,6 +1,9 @@
 #include <sys/socket.h>
 #include <string>
 #include <unistd.h>
+#include <expected>
+#include <fcntl.h>
+#include <errno.h>
 
 struct ErrorInfo
 {
@@ -24,7 +27,7 @@ public :
 	other.fd = -1;
     }
 
-    Socket& operator=(Socket&& other) noexcept
+    Socket& operator = (Socket&& other) noexcept
     {
 	if (this != &other) 
 	{
@@ -47,3 +50,24 @@ public :
 	    close(fd);
     }
 };
+
+std::expected<void, ErrorInfo> setNonBlocking(const Socket& sock)
+{
+    int flags = fcntl(sock.fd, F_GETFL, 0);
+
+    if(flags == -1)
+    {
+        int err = errno;
+
+        return std::unexpected(ErrorInfo{err, "F_GETFL failed: " + std::string(strerror(err))});
+    }
+
+    if(fcntl(sock.fd, F_SETFL, flags | O_NONBLOCK) == -1)
+    {
+        int err = errno;
+
+        return std::unexpected(ErrorInfo{err, "F_SETFL failed: " + std::string(strerror(err))});
+    }
+
+    return {};
+}

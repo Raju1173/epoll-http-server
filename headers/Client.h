@@ -7,6 +7,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <vector>
 
 class Client
 {
@@ -36,10 +37,8 @@ public :
 	return {};
     }
 
-    std::expected<void, ErrorInfo> send(std::string fileName = "")
+    std::expected<void, ErrorInfo> send(const std::string& request)
     {
-	std::string request = "GET /" + fileName + " HTTP/1.1\r\n\r\n";
-
 	size_t totalSize = request.length();
 	size_t totalSent = 0;
 	ssize_t n = 0;
@@ -63,30 +62,67 @@ public :
 	return {};
     }
 
-    std::expected<void, ErrorInfo> flush()
+    std::expected<std::string, ErrorInfo> recieve()
     {
-	char buf[4096];
+	std::vector<char> buffer;
+	buffer.resize(1024);
+	size_t curSize = 0;
 
-	while(true)
+	while (true)
 	{
-	    ssize_t n = read(sock.fd, buf, sizeof(buf));
+	    if (curSize >= buffer.size()) buffer.resize(buffer.size() * 2);
 
-	    if(n == -1)
+	    ssize_t n = read(sock.fd, buffer.data() + curSize, buffer.size() - curSize);
+	    
+	    if (n < 0)
 	    {
-		int err = errno;
-
-		if(err == EINTR)
-		    continue;
-
-		return std::unexpected(ErrorInfo{err, "Failed to read response : " + std::string(strerror(err))});
+		if (errno == EINTR) continue;
+		return std::unexpected(ErrorInfo{errno, "Read error"});
 	    }
 
-	    if(n == 0)
+	    if (n == 0)
+		return std::unexpected(ErrorInfo{599, "Closed prematurely"});
+
+	    curSize += n;
+	    std::string current(buffer.data(), curSize);
+	    size_t headerEnd = current.find("\r\n\r\n");
+
+	    if (headerEnd != std::string::npos)
 	    {
-		break;
+		size_t totalHeaderLen = headerEnd + 4;
+
+		size_t pos = current.find("Content-Length: ");
+		
+		if (pos == std::string::npos)
+		    return std::unexpected(ErrorInfo{-1, "No Content-Length"});
+
+		size_t start = pos + 16;
+		size_t end = current.find("\r\n", start);
+		long contLen = std::stol(std::string(current.substr(start, end - start)));
+
+		std::string body;
+		body.reserve(contLen);
+
+		size_t bytesAlreadyRead = curSize - totalHeaderLen;
+		
+		if (bytesAlreadyRead > 0)
+		{
+		    body.append(buffer.data() + totalHeaderLen, bytesAlreadyRead);
+		}
+
+		while (body.size() < (size_t)contLen)
+		{
+		    char temp[4096];
+		
+		    n = read(sock.fd, temp, std::min(sizeof(temp), contLen - body.size()));
+		    
+		    if (n <= 0) break; 
+		    
+		    body.append(temp, n);
+		}
+
+		return std::string(current.substr(0, totalHeaderLen)) + body;
 	    }
 	}
-
-	return {};
     }
 };

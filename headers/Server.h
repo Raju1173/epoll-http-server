@@ -1,9 +1,12 @@
 #include "Socket.h"
+#include <asm-generic/socket.h>
+#include <bits/types/struct_timeval.h>
 #include <errno.h>
 #include <expected>
 #include <netinet/in.h>
 #include <fstream>
 #include <sstream>
+#include <sys/epoll.h>
 
 #define LISTEN_BACKLOG 10000
 
@@ -21,7 +24,7 @@ std::expected<Socket, ErrorInfo> initializeServer()
     if (setsockopt(sock.fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
     {
 	int err = errno;
-	return std::unexpected(ErrorInfo{err, "Failed to set socket options : " + std::string(strerror(err))});
+	return std::unexpected(ErrorInfo{err, "Failed to set reuse address option : " + std::string(strerror(err))});
     }
 
     struct sockaddr_in addr = {AF_INET, htons(8080), {0}}; 
@@ -46,7 +49,15 @@ std::expected<std::vector<char>, ErrorInfo> readSock(const Socket& sock)
     std::vector<char> buf(4096);
     size_t curSize = 0;
     ssize_t n = 0;
+    
+    struct timeval tv = {5, 0};
 
+    if (setsockopt(sock.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1)
+    {
+	int err = errno;
+	return std::unexpected(ErrorInfo{err, "Failed to set recieve timeout option : " + std::string(strerror(err))});
+    }
+    
     while(true)
     {
 	if(curSize == buf.size())
@@ -88,7 +99,7 @@ std::expected<std::string, ErrorInfo> parse(std::string request)
 {
     if(!request.starts_with("GET "))
     {
-        return std::unexpected(ErrorInfo{405, "Method not supported"});
+        return std::unexpected(ErrorInfo{405, "HTTP/1.1 405 Method Not Supported\r\nAllow: GET\r\nContent-Length: 0\r\n\r\n"});
     }
 
     size_t start = 4; 
@@ -96,14 +107,14 @@ std::expected<std::string, ErrorInfo> parse(std::string request)
 
     if(end == SIZE_MAX)
     {
-        return std::unexpected(ErrorInfo{400, "Bad Request: No trailing space after path"});
+        return std::unexpected(ErrorInfo{400, "HTTP/1.1 400 Bad Request : File Name Not Specified\r\nAllow: GET\r\nContent-Length: 0\r\n\r\n"});
     }
 
     std::string path = "./static" + request.substr(start, end - start);
 
     if(path.find("..") != SIZE_MAX)
     {
-        return std::unexpected(ErrorInfo{403, "Forbidden: Path traversal detected"});
+        return std::unexpected(ErrorInfo{403, "HTTP/1.1 403 Directory Traversal Denied\r\nAllow: GET\r\nContent-Length: 0\r\n\r\n"});
     }
 
     if(path == "./static/")
@@ -117,7 +128,7 @@ std::expected<std::string, ErrorInfo> parse(std::string request)
 
     if(!file.is_open())
     {
-        return std::unexpected(ErrorInfo{404, "Not Found"});
+        return std::unexpected(ErrorInfo{404, "HTTP/1.1 404 File Not Found\r\nAllow: GET\r\nContent-Length: 0\r\n\r\n"});
     }
 
     std::stringstream buffer;
@@ -171,7 +182,7 @@ std::expected<Socket, ErrorInfo> acceptClient(const Socket& serverSock, struct s
 std::expected<void, ErrorInfo> handleClient(const Socket& sock)
 {
     auto requestResult = readSock(sock);
-    
+
     if(!requestResult)
     {
         return std::unexpected(requestResult.error());
@@ -181,7 +192,10 @@ std::expected<void, ErrorInfo> handleClient(const Socket& sock)
     
     if(!responseResult)
     {
-        return std::unexpected(responseResult.error());
+	if(responseResult.error().code == 400 || responseResult.error().code == 403 || responseResult.error().code == 404 || responseResult.error().code == 405)
+	    responseResult = responseResult.error().message.data();
+	else
+	    return std::unexpected(responseResult.error());
     }
     
     auto writeResult = writeSock(sock, *responseResult);

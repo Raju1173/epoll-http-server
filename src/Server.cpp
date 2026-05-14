@@ -1,3 +1,4 @@
+#include <__expected/unexpected.h>
 #include <cerrno>
 #include <chrono>
 #include <csignal>
@@ -6,6 +7,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <sys/epoll.h>
 #include "Server.h"
 
 volatile sig_atomic_t Running = true;
@@ -57,8 +59,11 @@ int main()
         
 	totalDuration += (end - start);
 
-	if(!result) {
-            fprintf(stderr, "Client handling error: %s\n", result.error().message.data());
+	if(!result.has_value())
+	{
+	    auto sendError = writeSock(*clientSock, result.error().message.data());
+	    
+	    fprintf(stderr, "Client handling error: %s\n", result.error().message.data());
         }
 
 	totalRequests++;
@@ -68,5 +73,5 @@ int main()
 
     std::cout << "Internal req/sec: " << totalRequests / seconds << std::endl;
 
-    return 0;
+    return EXIT_SUCCESS;
 }
