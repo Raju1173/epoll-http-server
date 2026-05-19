@@ -15,7 +15,7 @@ using TestSuite = std::vector<TestFunc>;
 
 std::string requestTest(std::string testName, std::string request, std::string expected)
 {
-    Client client;
+    testClient client;
     
     auto init = client.init();
     
@@ -53,7 +53,7 @@ std::string requestTest(std::string testName, std::string request, std::string e
 
 std::string sequentialClientsTest(int iterations)
 {
-    Client client;
+    testClient client;
     
     for (int i = 0; i < iterations; ++i) 
     {

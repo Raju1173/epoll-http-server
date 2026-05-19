@@ -1,12 +1,13 @@
 #include "Socket.h"
-#include <asm-generic/socket.h>
-#include <bits/types/struct_timeval.h>
+#include "Client.h"
+#include <cerrno>
 #include <errno.h>
 #include <expected>
 #include <netinet/in.h>
 #include <fstream>
 #include <sstream>
 #include <sys/epoll.h>
+#include <vector>
 
 #define LISTEN_BACKLOG 10000
 
@@ -44,55 +45,52 @@ std::expected<Socket, ErrorInfo> initializeServer()
     return sock;
 }
 
-std::expected<std::vector<char>, ErrorInfo> readSock(const Socket& sock)
+std::expected<void, ErrorInfo> readSock(ClientState& clientState)
 {
-    std::vector<char> buf(4096);
-    size_t curSize = 0;
+    size_t curSize = clientState.readBuffer.size();
     ssize_t n = 0;
-    
-    struct timeval tv = {5, 0};
-
-    if (setsockopt(sock.fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1)
-    {
-	int err = errno;
-	return std::unexpected(ErrorInfo{err, "Failed to set recieve timeout option : " + std::string(strerror(err))});
-    }
     
     while(true)
     {
-	if(curSize == buf.size())
+	if(curSize == clientState.readBuffer.size())
 	{
-	    buf.resize(buf.size() * 2);
+	    if(clientState.readBuffer.size() == 0)
+		clientState.readBuffer.resize(4096);
+	    
+	    else
+		clientState.readBuffer.resize(clientState.readBuffer.size() * 2);
 	}
 
-	n = read(sock.fd, buf.data() + curSize, buf.size() - curSize);
+	n = read(clientState.sock.fd, clientState.readBuffer.data() + curSize, clientState.readBuffer.size() - curSize);
     
 	if(n == -1)
 	{
 	    int err = errno;
 
 	    if (err == EINTR) continue;
+	    else if (err == EAGAIN || err == EWOULDBLOCK) return {};
 
 	    return std::unexpected(ErrorInfo{err, "Failed to read request : " + std::string(strerror(err))});
 	}
 
 	if(n == 0)
 	{
-	    break;
+	    return std::unexpected(ErrorInfo(499, "Client closed request"));
 	}
 	
 	curSize += n;
 	
 	//This works because the server only supports GET requests...
-	if(curSize >= 4 && memcmp(buf.data() + curSize - 4, "\r\n\r\n", 4) == 0)
+	if(curSize >= 4 && memcmp(clientState.readBuffer.data() + curSize - 4, "\r\n\r\n", 4) == 0)
 	{
+	    clientState.requestReady = true;
 	    break;
 	}
     }
 
-    buf.resize(curSize);
+    clientState.readBuffer.resize(curSize);
 
-    return buf;
+    return {};
 }
 
 std::expected<std::string, ErrorInfo> parse(std::string request)
@@ -140,70 +138,41 @@ std::expected<std::string, ErrorInfo> parse(std::string request)
     return response;
 }
 
-std::expected<size_t, ErrorInfo> writeSock(const Socket& sock, std::string response)
+std::expected<void, ErrorInfo> writeSock(ClientState& clientState)
 {
-    size_t totalSize = response.length();
-    size_t totalSent = 0;
+    size_t totalSize = clientState.writeBuffer.length();
     ssize_t n = 0;
 
-    while(totalSent < totalSize)
+    while(clientState.bytesSent < totalSize)
     {
-	n = write(sock.fd, response.data() + totalSent, totalSize - totalSent);
+	n = write(clientState.sock.fd, clientState.writeBuffer.data() + clientState.bytesSent, totalSize - clientState.bytesSent);
 
 	if(n == -1)
 	{
 	    int err = errno;
 
-	    if(errno == EINTR) continue;
+	    if(err == EINTR) continue;
+	    if(err == EAGAIN || err == EWOULDBLOCK) return {};
 	    
 	    return std::unexpected(ErrorInfo{err, "Failed to write response : " + std::string(strerror(err))});
 	}
 
-	totalSent += n;
+	clientState.bytesSent += n;
     }
 
-    return totalSent;
+    return {};
 }
 
-std::expected<Socket, ErrorInfo> acceptClient(const Socket& serverSock, struct sockaddr* clAddr, socklen_t* clAddrSize)
+std::expected<ClientState, ErrorInfo> acceptClient(const Socket& serverSock, struct sockaddr* clAddr, socklen_t* clAddrSize)
 {
-    Socket clientSock = Socket(accept(serverSock.fd, clAddr, clAddrSize));
+    ClientState clientState = {Socket(accept(serverSock.fd, clAddr, clAddrSize))};
 
-    if(clientSock.fd == -1)
+    if(clientState.sock.fd == -1)
     {
 	int err = errno;
 
 	return std::unexpected(ErrorInfo{err, "Failed to accept client : " + std::string(strerror(err))});
     }
 
-    return clientSock;
-}
-
-std::expected<void, ErrorInfo> handleClient(const Socket& sock)
-{
-    auto requestResult = readSock(sock);
-
-    if(!requestResult)
-    {
-        return std::unexpected(requestResult.error());
-    }
-
-    auto responseResult = parse((*requestResult).data());
-    
-    if(!responseResult)
-    {
-	if(responseResult.error().code == 400 || responseResult.error().code == 403 || responseResult.error().code == 404 || responseResult.error().code == 405)
-	    responseResult = responseResult.error().message.data();
-	else
-	    return std::unexpected(responseResult.error());
-    }
-    
-    auto writeResult = writeSock(sock, *responseResult);
-
-    if(!writeResult)
-    {
-        return std::unexpected(writeResult.error());
-    }
-
-    return {};
+    return clientState;
 }

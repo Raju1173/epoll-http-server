@@ -1,34 +1,52 @@
+#pragma once
+
 #include "Socket.h"
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
 #include <expected>
+#include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
-#include <netinet/in.h>
 #include <unistd.h>
 #include <vector>
+#include <list>
 
-class Client
+struct ClientState
 {
-public :
+    Socket sock;
+
+    std::vector<char> readBuffer;
+    
+    std::string writeBuffer;
+    size_t bytesSent;
+
+    bool requestReady = false;
+    bool responseReady = false;
+
+    std::list<ClientState>::iterator selfIt;
+};
+
+class testClient
+{
+public:
     Socket sock;
 
     std::expected<void, ErrorInfo> init()
     {
 	sock = Socket(socket(AF_INET, SOCK_STREAM, 0));
 
-	if(sock.fd == -1)
+	if (sock.fd == -1)
 	{
 	    int err = errno;
 	    return std::unexpected(ErrorInfo{err, "Failed to create socket : " + std::string(strerror(err))});
 	}
-	
-	//only targeting localhost to avoid measuring network overhead in benchmarks...
+
+	// only targeting localhost to avoid measuring network overhead in benchmarks...
 	struct sockaddr_in addr = {AF_INET, htons(8080), {0}};
 	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 
-	if(connect(sock.fd, (const sockaddr*) &addr, sizeof(addr)) == -1)
+	if (connect(sock.fd, (const sockaddr *)&addr, sizeof(addr)) == -1)
 	{
 	    int err = errno;
 	    return std::unexpected(ErrorInfo{err, "Failed to connect to server : " + std::string(strerror(err))});
@@ -37,21 +55,22 @@ public :
 	return {};
     }
 
-    std::expected<void, ErrorInfo> send(const std::string& request)
+    std::expected<void, ErrorInfo> send(const std::string &request)
     {
 	size_t totalSize = request.length();
 	size_t totalSent = 0;
 	ssize_t n = 0;
 
-	while(totalSent < totalSize)
+	while (totalSent < totalSize)
 	{
 	    n = write(sock.fd, request.data() + totalSent, totalSize - totalSent);
 
-	    if(n == -1)
+	    if (n == -1) 
 	    {
 		int err = errno;
 
-		if(errno == EINTR) continue;
+		if (errno == EINTR)
+		    continue;
 
 		return std::unexpected(ErrorInfo{err, "Failed to write response : " + std::string(strerror(err))});
 	    }
@@ -70,13 +89,15 @@ public :
 
 	while (true)
 	{
-	    if (curSize >= buffer.size()) buffer.resize(buffer.size() * 2);
+	    if (curSize >= buffer.size())
+		buffer.resize(buffer.size() * 2);
 
 	    ssize_t n = read(sock.fd, buffer.data() + curSize, buffer.size() - curSize);
-	    
+
 	    if (n < 0)
 	    {
-		if (errno == EINTR) continue;
+		if (errno == EINTR)
+		    continue;
 		return std::unexpected(ErrorInfo{errno, "Read error"});
 	    }
 
@@ -92,7 +113,7 @@ public :
 		size_t totalHeaderLen = headerEnd + 4;
 
 		size_t pos = current.find("Content-Length: ");
-		
+
 		if (pos == std::string::npos)
 		    return std::unexpected(ErrorInfo{-1, "No Content-Length"});
 
@@ -104,7 +125,7 @@ public :
 		body.reserve(contLen);
 
 		size_t bytesAlreadyRead = curSize - totalHeaderLen;
-		
+
 		if (bytesAlreadyRead > 0)
 		{
 		    body.append(buffer.data() + totalHeaderLen, bytesAlreadyRead);
@@ -113,11 +134,12 @@ public :
 		while (body.size() < (size_t)contLen)
 		{
 		    char temp[4096];
-		
-		    n = read(sock.fd, temp, std::min(sizeof(temp), contLen - body.size()));
-		    
-		    if (n <= 0) break; 
-		    
+
+		    n = read(sock.fd, temp, std::min(sizeof(temp), static_cast<size_t>(contLen - body.size())));
+
+		    if (n <= 0)
+			break;
+
 		    body.append(temp, n);
 		}
 

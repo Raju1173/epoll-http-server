@@ -15,8 +15,5 @@ target_include_directories(projectConfigs INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/
 add_executable(server src/Server.cpp)
 target_link_libraries(server PRIVATE projectConfigs)
 
-add_executable(bench benchmarks/ServerBench.cpp)
-target_link_libraries(bench PRIVATE projectConfigs)
-
 add_executable(test tests/ServerTest.cpp)
 target_link_libraries(test PRIVATE projectConfigs)
