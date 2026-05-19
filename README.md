@@ -12,4 +12,5 @@ A performance focused epoll based static HTTP server.
 | Architecture | req/sec | Description |
 | :--- | :--- | :--- |
 | **Blocking** | ~15,000 | Single threaded blocking accept/read/write. |
-| **Epoll** | ~34,000 | Single threaded event loop utlizing non blocking I/O multiplexing |
+| **Epoll (LT)** | ~34,000 | Single threaded event loop utlizing non blocking I/O multiplexing |
+| **Epoll (LT, keep alive)** | *TBD* | *TBD* |
