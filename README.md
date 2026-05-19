@@ -1,5 +1,5 @@
 # epoll-http-server
-A performance focused epoll based HTTP server written using the linux socket API.
+A performance focused epoll based static HTTP server.
 
 ## Performance Benchmarks
 
