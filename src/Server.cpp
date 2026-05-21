@@ -1,13 +1,10 @@
 #include <cerrno>
-#include <chrono>
 #include <csignal>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <iostream>
 #include <list>
-#include <ostream>
 #include <string>
 #include <sys/epoll.h>
 #include "Server.h"
@@ -125,7 +122,7 @@ int main()
 
 			struct epoll_event epevent;
 
-			epevent.events = EPOLLIN | EPOLLHUP;
+			epevent.events = EPOLLIN | EPOLLOUT | EPOLLHUP;
 			epevent.data.ptr = &clientStates.back();
 
 			if(epoll_ctl(epollfd, EPOLL_CTL_ADD, clientStates.back().sock.fd, &epevent) == -1)
@@ -161,60 +158,64 @@ int main()
 		{
 		    clientStates.erase(eventClientState->selfIt);
 
-		    fprintf(stderr, "%s", read.error().message.data());
+		    fprintf(stderr, "%s\n", read.error().message.data());
 
 		    continue;
 		}
 
-		if(eventClientState->requestReady == true)
+		if(eventClientState->readBuffer.size() >= 4)
 		{
-		    auto response = parse(std::string(eventClientState->readBuffer.data(), eventClientState->readBuffer.size()));
+		    size_t searchStart = (eventClientState->parseOffset >= 3) ? eventClientState->parseOffset - 3 : 0;
+		    size_t searchLen = eventClientState->readBuffer.size() - searchStart;
+		    
+		    //This works because the server only supports GET requests...
+		    char *requestEnd = (char*)memmem(eventClientState->readBuffer.data() + searchStart, searchLen, "\r\n\r\n", 4);
 
-		    if(!response.has_value())
+		    while(requestEnd != nullptr)
 		    {
-			fprintf(stderr, "%s", response.error().message.data());
+			auto start = eventClientState->readBuffer.begin();
+			auto end = eventClientState->readBuffer.begin() + ((requestEnd + 4) - eventClientState->readBuffer.data());
 
-			clientStates.erase(eventClientState->selfIt);
+			auto response = parse(std::string(start, end));
 
-			continue;
+			if(!response.has_value())
+			{
+			    fprintf(stderr, "%s\n", response.error().message.data());
+			}
+			else
+			{
+			    eventClientState->responses.push_back(*response);
+			}
+
+			eventClientState->readBuffer.erase(start, end);
+			eventClientState->parseOffset = 0;
+
+			if(eventClientState->readBuffer.size() >= 4)
+			{
+			    requestEnd = (char*)memmem(eventClientState->readBuffer.data(), eventClientState->readBuffer.size(), "\r\n\r\n", 4);
+			}
+
+			else
+			{
+			    requestEnd = nullptr; 
+			}
 		    }
 
-		    eventClientState->writeBuffer = *response;
-
-		    eventClientState->responseReady = true;
-
-		    epevent.events = EPOLLIN | EPOLLOUT | EPOLLHUP;
-		    epevent.data.ptr = eventClientState;
-
-		    if(epoll_ctl(epollfd, EPOLL_CTL_MOD, eventClientState->sock.fd, &epevent) == -1)
-		    {
-			int err = errno;
-
-			fprintf(stderr, "Failed to modify client epoll events : %s\n", strerror(err));
-
-			clientStates.erase(eventClientState->selfIt);
-
-			continue;
-		    }
-		}	
+		    eventClientState->parseOffset = eventClientState->readBuffer.size();
+		}
 	    }
 
 	    if (events[i].events & EPOLLOUT)
+	    {
+		auto write = writeSock(*eventClientState);
+
+		if(!write.has_value())
 		{
-		    auto write = writeSock(*eventClientState);
+		    fprintf(stderr, "%s\n", write.error().message.data());
 
-		    if(!write.has_value())
-		    {
-			fprintf(stderr, "%s", write.error().message.data());
-
-			continue;
-		    }
-
-		    if(eventClientState->bytesSent == eventClientState->writeBuffer.size())
-		    {
-			clientStates.erase(eventClientState->selfIt);
-		    }
+		    continue;
 		}
+	    }
 	}
     }
 

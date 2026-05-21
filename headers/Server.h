@@ -68,7 +68,7 @@ std::expected<void, ErrorInfo> readSock(ClientState& clientState)
 	    int err = errno;
 
 	    if (err == EINTR) continue;
-	    else if (err == EAGAIN || err == EWOULDBLOCK) return {};
+	    else if (err == EAGAIN || err == EWOULDBLOCK) break;
 
 	    return std::unexpected(ErrorInfo{err, "Failed to read request : " + std::string(strerror(err))});
 	}
@@ -79,13 +79,6 @@ std::expected<void, ErrorInfo> readSock(ClientState& clientState)
 	}
 	
 	curSize += n;
-	
-	//This works because the server only supports GET requests...
-	if(curSize >= 4 && memcmp(clientState.readBuffer.data() + curSize - 4, "\r\n\r\n", 4) == 0)
-	{
-	    clientState.requestReady = true;
-	    break;
-	}
     }
 
     clientState.readBuffer.resize(curSize);
@@ -133,31 +126,42 @@ std::expected<std::string, ErrorInfo> parse(std::string request)
     buffer << file.rdbuf();
     content = buffer.str();
 
-    std::string response = std::format("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{}", content.size(), content);
+    std::string response = std::format("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: keep-alive\r\n\r\n{}", content.size(), content);
 
     return response;
 }
 
 std::expected<void, ErrorInfo> writeSock(ClientState& clientState)
 {
-    size_t totalSize = clientState.writeBuffer.length();
-    ssize_t n = 0;
-
-    while(clientState.bytesSent < totalSize)
+    while(!clientState.responses.empty())
     {
-	n = write(clientState.sock.fd, clientState.writeBuffer.data() + clientState.bytesSent, totalSize - clientState.bytesSent);
+	size_t totalSize = clientState.responses.front().length();
+	ssize_t n = 0;
 
-	if(n == -1)
+	while(clientState.bytesSent < totalSize)
 	{
-	    int err = errno;
+	    n = write(clientState.sock.fd, clientState.responses.front().data() + clientState.bytesSent, totalSize - clientState.bytesSent);
 
-	    if(err == EINTR) continue;
-	    if(err == EAGAIN || err == EWOULDBLOCK) return {};
-	    
-	    return std::unexpected(ErrorInfo{err, "Failed to write response : " + std::string(strerror(err))});
+	    if(n == -1)
+	    {
+		int err = errno;
+
+		if(err == EINTR) continue;
+		if(err == EAGAIN || err == EWOULDBLOCK) return {};
+
+		fprintf(stderr, "Failed to write response : %s\n", strerror(err));
+
+		clientState.bytesSent = 0;
+
+		break;
+	    }
+
+	    clientState.bytesSent += n;
 	}
 
-	clientState.bytesSent += n;
+	clientState.bytesSent = 0;
+
+	clientState.responses.pop_front();
     }
 
     return {};

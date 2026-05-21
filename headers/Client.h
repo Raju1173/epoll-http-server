@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstring>
+#include <deque>
 #include <expected>
 #include <netinet/in.h>
 #include <string>
@@ -17,12 +18,10 @@ struct ClientState
     Socket sock;
 
     std::vector<char> readBuffer;
+    size_t parseOffset = 0;
     
-    std::string writeBuffer;
-    size_t bytesSent;
-
-    bool requestReady = false;
-    bool responseReady = false;
+    std::deque<std::string> responses;
+    size_t bytesSent = 0;
 
     std::list<ClientState>::iterator selfIt;
 };
