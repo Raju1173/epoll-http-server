@@ -12,7 +12,7 @@ target_link_options(projectConfigs INTERFACE -stdlib=libc++)
 
 target_include_directories(projectConfigs INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/headers)
 
-add_executable(server src/Server.cpp)
+add_executable(server src/Server.cpp src/Logger.cpp)
 target_link_libraries(server PRIVATE projectConfigs)
 
 add_executable(test tests/ServerTest.cpp)

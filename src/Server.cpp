@@ -1,3 +1,4 @@
+#include <atomic>
 #include <cerrno>
 #include <csignal>
 #include <cstddef>
@@ -8,11 +9,10 @@
 #include <string>
 #include <sys/epoll.h>
 #include "Server.h"
-#include "Client.h"
 
 #define MAX_EVENTS 64
 
-volatile sig_atomic_t Running = true;
+std::atomic<bool> Running = true;
 
 void handleSIGINT(int signum)
 {
@@ -21,11 +21,13 @@ void handleSIGINT(int signum)
 
 int main()
 {
+    LoggerGuard logger;
+
     auto serverSock = initializeServer();
 
     if(!serverSock)
     {
-        fprintf(stderr, "Fatal Server Error: %s (Code: %d)\n", serverSock.error().message.data(), serverSock.error().code);
+	log({messageType::ERROR, serverSock.error().message});
     
 	return EXIT_FAILURE;
     }
@@ -34,7 +36,7 @@ int main()
 
     if(!serverNonBlock.has_value())
     {
-	fprintf(stderr, "Failed to set server socket as non blocking : %s (Code: %d)\n", serverNonBlock.error().message.data(), serverNonBlock.error().code);
+	log({messageType::ERROR, serverNonBlock.error().message});
     
 	return EXIT_FAILURE;
     }
@@ -45,7 +47,7 @@ int main()
     {
 	int err = errno;
 
-	fprintf(stderr, "Failed to create epoll instance : %s\n", strerror(err));
+	log({messageType::ERROR, std::string("Failed to create epoll instance : ") + strerror(err)});
     
 	return EXIT_FAILURE;
     }
@@ -59,7 +61,7 @@ int main()
     {
 	int err = errno;
 
-	fprintf(stderr, "Failed to register server socket to epoll : %s\n", strerror(err));
+	log({messageType::ERROR, std::string("Failed to register server socket to epoll : ") + strerror(err)});
 
 	return  EXIT_FAILURE;
     }
@@ -102,7 +104,7 @@ int main()
 			    if (clientState.error().code == EINTR) Running = false;
 			    if(clientState.error().code == EAGAIN || clientState.error().code == EWOULDBLOCK) break;
 
-			    fprintf(stderr, "Accept failed: %s\n", clientState.error().message.data());
+			    log({messageType::ERROR, "Accept failed : " + clientState.error().message});
 
 			    continue;
 			}
@@ -111,7 +113,7 @@ int main()
 
 			if(!clientNonBlock.has_value())
 			{
-			    fprintf(stderr, "Failed to set client socket as non blocking : %s (Code: %d)\n", clientNonBlock.error().message.data(), clientNonBlock.error().code);
+			    log({messageType::ERROR, clientNonBlock.error().message});
 
 			    continue;
 			}
@@ -129,7 +131,7 @@ int main()
 			{
 			    int err = errno;
 
-			    fprintf(stderr, "Failed to register client socket to epoll : %s\n", strerror(err));
+			    log({messageType::ERROR, std::string("Failed to register client socket to epoll : ") + strerror(err)});
 
 			    clientStates.erase(clientStates.back().selfIt);
 
@@ -158,7 +160,7 @@ int main()
 		{
 		    clientStates.erase(eventClientState->selfIt);
 
-		    fprintf(stderr, "%s\n", read.error().message.data());
+		    log({messageType::ERROR, read.error().message});
 
 		    continue;
 		}
@@ -180,7 +182,7 @@ int main()
 
 			if(!response.has_value())
 			{
-			    fprintf(stderr, "%s\n", response.error().message.data());
+			    log({messageType::ERROR, response.error().message});
 			}
 			else
 			{
@@ -211,7 +213,7 @@ int main()
 
 		if(!write.has_value())
 		{
-		    fprintf(stderr, "%s\n", write.error().message.data());
+		    log({messageType::ERROR, write.error().message});
 
 		    continue;
 		}

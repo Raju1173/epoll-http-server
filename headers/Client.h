@@ -41,7 +41,6 @@ public:
 	    return std::unexpected(ErrorInfo{err, "Failed to create socket : " + std::string(strerror(err))});
 	}
 
-	// only targeting localhost to avoid measuring network overhead in benchmarks...
 	struct sockaddr_in addr = {AF_INET, htons(8080), {0}};
 	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 

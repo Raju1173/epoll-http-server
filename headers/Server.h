@@ -8,6 +8,7 @@
 #include <sstream>
 #include <sys/epoll.h>
 #include <vector>
+#include "Logger.h"
 
 #define LISTEN_BACKLOG 10000
 
@@ -93,7 +94,7 @@ std::expected<std::string, ErrorInfo> parse(std::string request)
         return std::unexpected(ErrorInfo{405, "HTTP/1.1 405 Method Not Supported\r\nAllow: GET\r\nContent-Length: 0\r\n\r\n"});
     }
 
-    size_t start = 4; 
+    size_t start = 4;
     size_t end = request.find(' ', start);
 
     if(end == SIZE_MAX)
@@ -149,7 +150,7 @@ std::expected<void, ErrorInfo> writeSock(ClientState& clientState)
 		if(err == EINTR) continue;
 		if(err == EAGAIN || err == EWOULDBLOCK) return {};
 
-		fprintf(stderr, "Failed to write response : %s\n", strerror(err));
+		log({messageType::ERROR, std::string("Failed to write response : ") + strerror(err)});
 
 		clientState.bytesSent = 0;
 
