@@ -14,4 +14,5 @@ A performance focused epoll based static HTTP server.
 | **Blocking** | ~15,000 | Single threaded blocking accept/read/write. |
 | **Epoll (LT)** | ~34,000 | Single threaded event loop utlizing non blocking I/O multiplexing |
 | **Epoll (LT, keep alive)** | ~37,500 | Single threaded event loop with persistent connections |
-| **Epoll (LT, keep alive, multithreading)** | *TBD* | *TBD* |
+| **Epoll (LT, keep alive, sendfile)** | ~41k | Single threaded event loop with persistent connections and zero copy file serving |
+| **Epoll (LT, keep alive, sendfile, multithreading)** | *TBD* | *TBD* |

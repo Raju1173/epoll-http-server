@@ -186,7 +186,7 @@ int main()
 			}
 			else
 			{
-			    eventClientState->responses.push_back(*response);
+			    eventClientState->responses.push_back(std::move(*response));
 			}
 
 			eventClientState->readBuffer.erase(start, end);

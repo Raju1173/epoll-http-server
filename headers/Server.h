@@ -1,12 +1,15 @@
 #include "Socket.h"
 #include "Client.h"
 #include <cerrno>
+#include <cstring>
 #include <errno.h>
 #include <expected>
 #include <netinet/in.h>
-#include <fstream>
-#include <sstream>
+#include <string>
 #include <sys/epoll.h>
+#include <sys/sendfile.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #include <vector>
 #include "Logger.h"
 
@@ -87,7 +90,7 @@ std::expected<void, ErrorInfo> readSock(ClientState& clientState)
     return {};
 }
 
-std::expected<std::string, ErrorInfo> parse(std::string request)
+std::expected<Response, ErrorInfo> parse(std::string request)
 {
     if(!request.starts_with("GET "))
     {
@@ -114,34 +117,67 @@ std::expected<std::string, ErrorInfo> parse(std::string request)
 	path = "./static/index.html";
     }
 
-    std::string content;
+    File file(open(path.c_str(), O_RDONLY));
 
-    std::ifstream file(path);
-
-    if(!file.is_open())
+    if(file.fd == -1)
     {
-        return std::unexpected(ErrorInfo{404, "HTTP/1.1 404 File Not Found\r\nAllow: GET\r\nContent-Length: 0\r\n\r\n"});
+	int err = errno;
+
+        return std::unexpected(ErrorInfo{-1, std::string("Failed to open file : ") + strerror(err)});
     }
 
-    std::stringstream buffer;
-    buffer << file.rdbuf();
-    content = buffer.str();
+    struct stat st;
 
-    std::string response = std::format("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: keep-alive\r\n\r\n{}", content.size(), content);
+    if(fstat(file.fd, &st) == -1)
+    {
+	int err = errno;
 
-    return response;
+	return std::unexpected(ErrorInfo{-1, std::string("Failed to get file stats : ") + strerror(err)});
+    }
+
+    size_t fileSize = st.st_size;
+
+    return Response{std::format("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html\r\nConnection: keep-alive\r\n\r\n", fileSize), 0, std::move(file), 0, fileSize};
 }
 
 std::expected<void, ErrorInfo> writeSock(ClientState& clientState)
 {
     while(!clientState.responses.empty())
     {
-	size_t totalSize = clientState.responses.front().length();
+	Response& response = clientState.responses.front();
+
+	if(response.headerOffset != response.header.length())
+	{
+	    size_t totalSize = response.header.length();
+	    ssize_t n = 0;
+
+	    while(response.headerOffset < totalSize)
+	    {
+		n = write(clientState.sock.fd, response.header.data() + response.headerOffset, totalSize - response.headerOffset);
+
+		if(n == -1)
+		{
+		    int err = errno;
+
+		    if(err == EINTR) continue;
+		    if(err == EAGAIN || err == EWOULDBLOCK) return {};
+
+		    log({messageType::ERROR, std::string("Failed to write response : ") + strerror(err)});
+
+		    clientState.responses.pop_front();
+
+		    continue;
+		}
+
+		response.headerOffset += n;
+	    }
+	}
+
 	ssize_t n = 0;
 
-	while(clientState.bytesSent < totalSize)
+	while(response.remainingBytes != 0)
 	{
-	    n = write(clientState.sock.fd, clientState.responses.front().data() + clientState.bytesSent, totalSize - clientState.bytesSent);
+	    n = sendfile(clientState.sock.fd, response.fileFd.fd, &response.fileOffset, response.remainingBytes);
 
 	    if(n == -1)
 	    {
@@ -152,15 +188,13 @@ std::expected<void, ErrorInfo> writeSock(ClientState& clientState)
 
 		log({messageType::ERROR, std::string("Failed to write response : ") + strerror(err)});
 
-		clientState.bytesSent = 0;
+		clientState.responses.pop_front();
 
-		break;
+		continue;
 	    }
 
-	    clientState.bytesSent += n;
+	    response.remainingBytes -= n;
 	}
-
-	clientState.bytesSent = 0;
 
 	clientState.responses.pop_front();
     }
