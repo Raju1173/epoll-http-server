@@ -12,6 +12,8 @@ target_link_options(projectConfigs INTERFACE -stdlib=libc++)
 
 target_include_directories(projectConfigs INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/headers)
 
+file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/static" "${CMAKE_CURRENT_BINARY_DIR}/static" SYMBOLIC)
+
 add_executable(server src/Server.cpp src/Logger.cpp)
 target_link_libraries(server PRIVATE projectConfigs)
 

@@ -1,6 +1,15 @@
 # epoll-http-server
 A performance focused epoll based static HTTP server.
 
+## Features
+
+- Non blocking sockets
+- epoll based event loop
+- HTTP keep alive support
+- Zero copy file serving using sendfile()
+- SO_REUSEPORT based multithreaded architecture
+- Asynchronous logging
+
 ## Performance Benchmarks
 
 - **Benchmark command** : `wrk -t4 -c10000 -d10s http://127.0.0.1:8080/`
@@ -15,4 +24,4 @@ A performance focused epoll based static HTTP server.
 | **Epoll (LT)** | ~34,000 | Single threaded event loop utlizing non blocking I/O multiplexing |
 | **Epoll (LT, keep alive)** | ~37,500 | Single threaded event loop with persistent connections |
 | **Epoll (LT, keep alive, sendfile)** | ~41k | Single threaded event loop with persistent connections and zero copy file serving |
-| **Epoll (LT, keep alive, sendfile, multithreading)** | *TBD* | *TBD* |
+| **Epoll (LT, keep alive, sendfile, multithreading)** | ~125k | Multithreaded architecture running 4 concurrent epoll loops (optimal on test machine) |
