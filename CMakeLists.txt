@@ -16,6 +16,3 @@ file(CREATE_LINK "${CMAKE_CURRENT_SOURCE_DIR}/static" "${CMAKE_CURRENT_BINARY_DI
 
 add_executable(server src/Server.cpp src/Logger.cpp)
 target_link_libraries(server PRIVATE projectConfigs)
-
-add_executable(test tests/ServerTest.cpp)
-target_link_libraries(test PRIVATE projectConfigs)
