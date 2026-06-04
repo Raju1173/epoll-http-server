@@ -26,19 +26,19 @@ template <> struct std::formatter<messageType>
         std::string_view name = "UNKNOWN";
         
         switch (type)
-	{
+        {
             case messageType::DEBUG:
-		name = "DEBUG";
-		break;
+                name = "DEBUG";
+                break;
             case messageType::INFO:
-		name = "INFO";
-		break;
+                name = "INFO";
+                break;
             case messageType::WARNING:
-		name = "WARNING";
-		break;
+                name = "WARNING";
+                break;
             case messageType::ERROR:
-		name = "ERROR";
-		break;
+                name = "ERROR";
+                break;
         }
         
         return underlying.format(name, ctx);
@@ -48,9 +48,9 @@ template <> struct std::formatter<messageType>
 void log(LogEntry log)
 {
     {
-	std::lock_guard lock(logMutex);
+        std::lock_guard lock(logMutex);
 
-	logQueue.push(std::move(log));
+        logQueue.push(std::move(log));
     }
 
     logCV.notify_one();
@@ -60,22 +60,22 @@ void logger()
 {
     while(Running)
     {
-	std::unique_lock lock(logMutex);
+        std::unique_lock lock(logMutex);
 
-	logCV.wait(lock, []{ return !logQueue.empty() || !Running; });
+        logCV.wait(lock, []{ return !logQueue.empty() || !Running; });
 
-	while(!logQueue.empty())
-	{
-	    LogEntry front = std::move(logQueue.front());
+        while(!logQueue.empty())
+        {
+            LogEntry front = std::move(logQueue.front());
 
-	    logQueue.pop();
+            logQueue.pop();
 
-	    lock.unlock();
+            lock.unlock();
 
-	    std::print("[{}] - {}\n", front.type, front.message);
+            std::print("[{}] - {}\n", front.type, front.message);
 
-	    lock.lock();
-	}
+            lock.lock();
+        }
     }
 }
 
@@ -88,6 +88,6 @@ LoggerGuard::~LoggerGuard()
 
     if (logThread.joinable()) 
     {
-	logThread.join();
+        logThread.join();
     }
 }
