@@ -1,15 +1,6 @@
 # epoll-http-server
 A performance focused epoll based static HTTP server.
 
-## Features
-
-- Non blocking sockets
-- epoll based event loop
-- HTTP keep alive support
-- Zero copy file serving using sendfile()
-- SO_REUSEPORT based multithreaded architecture
-- Asynchronous logging
-
 ## Performance Benchmarks
 
 - **Benchmark command** : `wrk -t4 -c10000 -d10s http://127.0.0.1:8080/`
